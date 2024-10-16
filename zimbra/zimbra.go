@@ -9,8 +9,6 @@ import (
 	"net/url"
 	"strings"
 
-	"errors"
-
 	"golang.org/x/net/html"
 	"golang.org/x/net/publicsuffix"
 	"ransan.fr/zimbridge/mda/config"
@@ -43,49 +41,29 @@ func Login(client *http.Client) error {
 	}
 	slog.Debug("Got login form", slog.Any("url", resp.Request.URL))
 
-	slog.Debug("Extracting form informations")
-	form, err := getForm(resp.Body)
-	if err != nil {
-		return fmt.Errorf("cannot extract form informations: %w", err)
-	}
-	slog.Debug("Extracted form informations")
-
-	slog.Info("Logging in", slog.String("username", config.Username))
-	form.inputs.Add("username", config.Username)
-	form.inputs.Add("password", config.Password)
-	form.inputs.Add("submit", "SE CONNECTER")
-	resp, err = client.PostForm("https://auth.u-cergy.fr"+form.url, form.inputs)
-	if err != nil {
-		return fmt.Errorf("POST https://auth.u-cergy.fr/: %w", err)
-	}
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("POST https://auth.u-cergy.fr/: unexpected status code: %v", resp.StatusCode)
-	}
-	if ct := resp.Header.Get("content-type"); !strings.HasPrefix(ct, "text/html") {
-		return fmt.Errorf("POST https://auth.u-cergy.fr/: unexpected content-type: %s", ct)
-	}
-	slog.Debug("Logged in", slog.Any("url", resp.Request.URL))
-
+	// It seems to take a random amound of steps to log in
+	// TODO: check for <form><div id="status" class="errors"> in output from
+    //       https://auth.u-cergy.fr/login, indicating wrong login info
 	for resp.Request.URL.Host != "mail.etu.cyu.fr" {
 		slog.Debug("Extracting form informations")
-		form, err = getForm(resp.Body)
+		url, inputs, err := extractFormInfo(resp)
 		if err != nil {
 			return fmt.Errorf("cannot extract form informations: %w", err)
 		}
 		slog.Debug("Extracted form informations")
 
-		slog.Info("Doing SSO stuff", slog.String("url", form.url))
-		resp, err = client.PostForm(form.url, form.inputs)
+		slog.Info("Doing one login step", slog.String("url", url))
+		resp, err = client.PostForm(url, inputs)
 		if err != nil {
-			return fmt.Errorf("POST SSO: %w", err)
+			return fmt.Errorf("POST %s: %w", url, err)
 		}
 		if resp.StatusCode != 200 {
-			return fmt.Errorf("POST SSO: unexpected status code: %v", resp.StatusCode)
+			return fmt.Errorf("POST %s: unexpected status code: %v", url, resp.StatusCode)
 		}
 		if ct := resp.Header.Get("content-type"); !strings.HasPrefix(ct, "text/html") {
-			return fmt.Errorf("POST SSO: unexpected content-type: %s", ct)
+			return fmt.Errorf("POST %s: unexpected content-type: %s", url, ct)
 		}
-		slog.Debug("Did SSO stuff", slog.Any("url", resp.Request.URL))
+		slog.Debug("Did one login step", slog.Any("url", resp.Request.URL))
 	}
 
 	return nil
@@ -108,44 +86,71 @@ func FetchArchive(client *http.Client) (io.ReadCloser, error) {
 	return resp.Body, nil
 }
 
+func extractFormInfo(resp *http.Response) (actionUrl string, inputs url.Values, err error) {
+	doc, err := html.Parse(resp.Body)
+	if err != nil {
+		return
+	}
 
-type form struct {
-	url    string
-	inputs url.Values
+	action, inputs, err := formInfo(doc)
+	if err != nil {
+		return
+	}
+
+	parsedAction, err := url.Parse(action)
+	if err != nil {
+		return
+	}
+
+	actionUrl = resp.Request.URL.ResolveReference(parsedAction).String()
+	return
 }
 
-func (form *form) extractForm(n *html.Node) error {
+func formInfo(n *html.Node) (action string, inputs url.Values, err error) {
 	if n.Type == html.ElementNode && n.Data == "form" {
+		var method string
+
 		for _, a := range n.Attr {
-			if a.Key == "action" {
-				form.url = a.Val
-				break
+			switch a.Key {
+			case "action":
+				action = a.Val
+			case "method":
+				method = a.Val
 			}
 		}
 
-		return form.extractHiddenInputs(n)
-	}
-
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		err := form.extractForm(c)
-		if err == nil {
-			return nil
+		if strings.ToUpper(method) == "POST" {
+			inputs = url.Values{}
+			err = formInputs(n, inputs)
+			return
+		} else {
+			slog.Debug("Form without method POST",
+				slog.String("method", method),
+				slog.String("action", action))
 		}
 	}
 
-	return errors.New("couldn't find form")
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		action, inputs, err = formInfo(c)
+		if err == nil {
+			return
+		}
+	}
+
+	err = fmt.Errorf("couldn't find form")
+	return
 }
 
-func (form *form) extractHiddenInputs(n *html.Node) error {
+func formInputs(n *html.Node, inputs url.Values) error {
 	if n.Type == html.ElementNode && n.Data == "input" {
-		hidden := false
-		name := ""
-		value := ""
+		typ := "text"
+		var name string
+		var value string
 
 		for _, a := range n.Attr {
 			switch a.Key {
 			case "type":
-				hidden = a.Val == "hidden"
+				typ = a.Val
 			case "name":
 				name = a.Val
 			case "value":
@@ -153,29 +158,40 @@ func (form *form) extractHiddenInputs(n *html.Node) error {
 			}
 		}
 
-		if hidden && name != "" && value != "" {
-			form.inputs.Add(name, value)
+		switch typ {
+		case "submit":
+			fallthrough
+		case "hidden":
+			if name != "" && value != "" {
+				inputs.Add(name, value)
+				goto added
+			}
+		case "text":
+			if name == "username" {
+				inputs.Add("username", config.Username)
+				goto added
+			}
+		case "password":
+			if name == "password" {
+				inputs.Add("password", config.Password)
+				goto added
+			}
 		}
+
+		slog.Debug("Ignored form input",
+			slog.String("type", typ),
+			slog.String("name", name),
+			slog.String("value", value))
+
+	added:
 	}
 
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		form.extractHiddenInputs(c)
+		err := formInputs(c, inputs)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
-}
-
-func getForm(r io.Reader) (*form, error) {
-	form := &form{
-		inputs: url.Values{},
-	}
-
-	doc, err := html.Parse(r)
-	if err != nil {
-		return form, err
-	}
-
-	err = form.extractForm(doc)
-
-	return form, err
 }
