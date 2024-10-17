@@ -1,10 +1,8 @@
 package maildir
 
 import (
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -26,11 +24,6 @@ func Open(path string) (*Maildir, error) {
 		if !fi.IsDir() {
 			return nil, fmt.Errorf("%s: not a directory", subdirPath)
 		}
-	}
-
-	_, err := os.Stat(filepath.Join(path, "maildirfolder"))
-	if !errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("maildirfolder present")
 	}
 
 	return &Maildir{path: path}, nil
