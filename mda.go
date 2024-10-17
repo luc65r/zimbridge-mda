@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"ransan.fr/zimbridge/mda/config"
+	"ransan.fr/zimbridge/mda/maildir"
 	"ransan.fr/zimbridge/mda/zimbra"
 )
 
@@ -127,6 +128,12 @@ OPTIONS:
 		os.Exit(1)
 	}
 
+	maildir, err := maildir.Open(config.Maildir)
+	if err != nil {
+		slog.Error("Failed to open maildir", slog.Any("error", err))
+		os.Exit(1)
+	}
+
 	slog.Info("Reading archive")
 	tr := tar.NewReader(zr)
 	for {
@@ -145,7 +152,22 @@ OPTIONS:
 		}
 
 		if path.Ext(hdr.Name) == ".eml" {
-			slog.Debug("In tarball", "name", hdr.Name)
+			parts := strings.Split(hdr.Name, "/")
+			md := maildir
+			for _, folder := range parts[:len(parts)-1] {
+				md, err = md.AddFolder(folder)
+				if err != nil {
+					slog.Error("Failed to open maildir folder", slog.Any("error", err))
+					os.Exit(1)
+				}
+			}
+
+			slog.Debug("Writing mail", slog.String("name", hdr.Name))
+			err = md.AddMail(tr)
+			if err != nil {
+				slog.Error("Failed to write mail", slog.Any("error", err))
+				os.Exit(1)
+			}
 		}
 	}
 }
