@@ -71,7 +71,7 @@ func Login(client *http.Client) error {
 
 func FetchArchive(client *http.Client) (io.ReadCloser, error) {
 	slog.Info("Requesting tarball")
-	resp, err := client.Get("https://mail.etu.cyu.fr/home/" + config.Address + "/?fmt=tgz")
+	resp, err := client.Get("https://mail.etu.cyu.fr/home/" + config.Address + "/?fmt=tgz&meta=1")
 	if err != nil {
 		return nil, fmt.Errorf("GET https://mail.etu.cyu.fr/home/: %w", err)
 	}
@@ -192,6 +192,34 @@ func formInputs(n *html.Node, inputs url.Values) error {
 			return err
 		}
 	}
+
+	return nil
+}
+
+func DeleteMails(client *http.Client, ids []string) error {
+	url := "https://mail.etu.cyu.fr/service/soap"
+
+	body := fmt.Sprintf(`{
+  "Body": {
+    "MsgActionRequest": {
+      "_jsns": "urn:zimbraMail",
+      "action": {
+        "op": "trash",
+        "id": "%s"
+      }
+    }
+  }
+}`, strings.Join(ids, ","))
+
+	slog.Info("Deleting e-mails", slog.String("url", url), slog.Any("ids", ids))
+	resp, err := client.Post(url, "application/soap+xml", strings.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", url, err)
+	}
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("POST %s: unexpected status code: %v", url, resp.StatusCode)
+	}
+	slog.Debug("Deleted e-mails")
 
 	return nil
 }

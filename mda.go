@@ -29,6 +29,9 @@ func main() {
 	flag.StringVar(&config.Address, "a", defaultAddress, "")
 	flag.StringVar(&config.Address, "address", defaultAddress, "")
 
+	flag.BoolVar(&config.Trash, "t", false, "")
+	flag.BoolVar(&config.Trash, "trash", false, "")
+
 	defaultVerbose := os.Getenv("ZIMBRIDGE_MDA_VERBOSE") == "1"
 	var verboseFlag bool
 	flag.BoolVar(&verboseFlag, "v", defaultVerbose, "")
@@ -38,11 +41,13 @@ func main() {
 		fmt.Printf(`zimbridge-mda %s
 Lucas Ransan <lucas@ransan.fr>
 
-zimbridge-mda (Zimbra bridge, mail delivery agent) uses your USERNAME and your
+Zimbridge-MDA (Zimbra bridge, mail delivery agent) uses your USERNAME and your
 PASSWORD to connect to https://mail.etu.cyu.fr (Zimbra webmail instance) and
 download all your e-mails.  It stores them in the provided MAILDIR directory,
 using Maildir++ directory layout.  You can then use an email client to read your
 e-mails offline, or configure an IMAP server like Dovecot to use that directory.
+Zimbridge-MDA can also move all the stored e-mails to the trash folder in the
+webmail, so that it doesn't fetch them again the next time.
 
 USAGE:
     %s -username USERNAME -password PASSWORD -address ADDRESS MAILDIR
@@ -54,6 +59,7 @@ OPTIONS:
     -u, -username USERNAME    Your CYU username, probably starting with "e-"
     -p, -password PASSWORD    Your CYU password
     -a, -address ADDRESS      Your @etu.cyu.fr e-mail address
+    -t, -trash                Trash e-mails in your webmail
     -v, -verbose              Print debug informations
     -h, -help                 Print usage informations and quit
 `, config.Version, os.Args[0])
@@ -73,6 +79,12 @@ OPTIONS:
 	config.Maildir = flag.Arg(0)
 	if config.Maildir == "" {
 		slog.Error("No maildir directory provided")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	if flag.NArg() > 1 {
+		slog.Error("Too many arguments")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -134,6 +146,24 @@ OPTIONS:
 		os.Exit(1)
 	}
 
+	ids, err := storeMails(maildir, zr)
+	if err != nil {
+		slog.Error("Failed to store e-mails in maildir", slog.Any("error", err))
+		os.Exit(1)
+	}
+
+	if config.Trash {
+		err = zimbra.DeleteMails(client, ids)
+		if err != nil {
+			slog.Error("Failed to delete e-mails from Zimbra", slog.Any("error", err))
+			os.Exit(1)
+		}
+	}
+}
+
+func storeMails(maildir *maildir.Maildir, zr io.Reader) ([]string, error) {
+	var ids []string
+
 	slog.Info("Reading archive")
 	tr := tar.NewReader(zr)
 	for {
@@ -142,12 +172,13 @@ OPTIONS:
 			break
 		}
 		if err != nil {
-			slog.Error("Invalid tarball", slog.Any("error", err))
-			os.Exit(1)
+			return nil, fmt.Errorf("invalid tarball: %w", err)
 		}
 
 		if hdr.Typeflag != tar.TypeReg {
-			slog.Warn("Ignoring irregular file", slog.String("name", hdr.Name), slog.Int("type", int(hdr.Typeflag)))
+			slog.Warn("Ignoring irregular file",
+				slog.String("name", hdr.Name),
+				slog.Int("type", int(hdr.Typeflag)))
 			continue
 		}
 
@@ -157,17 +188,29 @@ OPTIONS:
 			for _, folder := range parts[:len(parts)-1] {
 				md, err = md.AddFolder(folder)
 				if err != nil {
-					slog.Error("Failed to open maildir folder", slog.Any("error", err))
-					os.Exit(1)
+					return nil, fmt.Errorf("open maildir folder: %w", err)
 				}
 			}
 
-			slog.Debug("Writing mail", slog.String("name", hdr.Name))
+			slog.Debug("Writing e-mail", slog.String("name", hdr.Name))
 			err = md.AddMail(tr)
 			if err != nil {
-				slog.Error("Failed to write mail", slog.Any("error", err))
-				os.Exit(1)
+				return nil, fmt.Errorf("write e-mail: %w", err)
 			}
+
+			name := parts[len(parts)-1]
+			id, _, found := strings.Cut(name, "-")
+			if !found {
+				slog.Warn("Cannot find id in file name", slog.String("name", name))
+				continue
+			}
+
+			id = strings.TrimLeft(id, "0")
+			ids = append(ids, id)
 		}
 	}
+
+	slog.Info(fmt.Sprintf("Stored %v e-mails", len(ids)))
+
+	return ids, nil
 }

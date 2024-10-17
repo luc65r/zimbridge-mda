@@ -7,4 +7,5 @@ var (
 	Password string
 	Address string
 	Maildir string
+	Trash bool
 )
