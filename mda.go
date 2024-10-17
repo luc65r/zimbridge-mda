@@ -41,7 +41,7 @@ func main() {
 		fmt.Printf(`zimbridge-mda %s
 Lucas Ransan <lucas@ransan.fr>
 
-Zimbridge-MDA (Zimbra bridge, mail delivery agent) uses your USERNAME and your
+Zimbridge-MDA (Zimbra bridge, Mail Delivery Agent) uses your USERNAME and your
 PASSWORD to connect to https://mail.etu.cyu.fr (Zimbra webmail instance) and
 download all your e-mails.  It stores them in the provided MAILDIR directory,
 using Maildir++ directory layout.  You can then use an email client to read your
