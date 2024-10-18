@@ -29,8 +29,9 @@ func main() {
 	flag.StringVar(&config.Address, "a", defaultAddress, "")
 	flag.StringVar(&config.Address, "address", defaultAddress, "")
 
-	flag.BoolVar(&config.Trash, "t", false, "")
-	flag.BoolVar(&config.Trash, "trash", false, "")
+	defaultTag := os.Getenv("ZIMBRIDGE_MDA_TAG")
+	flag.StringVar(&config.Tag, "t", defaultTag, "")
+	flag.StringVar(&config.Tag, "tag", defaultTag, "")
 
 	defaultVerbose := os.Getenv("ZIMBRIDGE_MDA_VERBOSE") == "1"
 	var verboseFlag bool
@@ -46,8 +47,8 @@ PASSWORD to connect to https://mail.etu.cyu.fr (Zimbra webmail instance) and
 download all your e-mails.  It stores them in the provided MAILDIR directory,
 using Maildir++ directory layout.  You can then use an email client to read your
 e-mails offline, or configure an IMAP server like Dovecot to use that directory.
-Zimbridge-MDA can also move all the stored e-mails to the trash folder in the
-webmail, so that it doesn't fetch them again the next time.
+Zimbridge-MDA can also tag all the stored e-mails in the webmail, so that it
+doesn't fetch them again the next time.
 
 USAGE:
     %s -username USERNAME -password PASSWORD -address ADDRESS MAILDIR
@@ -59,7 +60,7 @@ OPTIONS:
     -u, -username USERNAME    Your CYU username, probably starting with "e-"
     -p, -password PASSWORD    Your CYU password
     -a, -address ADDRESS      Your @etu.cyu.fr e-mail address
-    -t, -trash                Trash e-mails in your webmail
+    -t, -tag TAG              Tag e-mails in your webmail
     -v, -verbose              Print debug informations
     -h, -help                 Print usage informations and quit
 `, config.Version, os.Args[0])
@@ -152,8 +153,8 @@ OPTIONS:
 		os.Exit(1)
 	}
 
-	if config.Trash {
-		err = zimbra.DeleteMails(client, ids)
+	if config.Tag != "" {
+		err = zimbra.TagMails(client, ids)
 		if err != nil {
 			slog.Error("Failed to delete e-mails from Zimbra", slog.Any("error", err))
 			os.Exit(1)

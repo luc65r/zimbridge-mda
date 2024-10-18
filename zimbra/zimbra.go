@@ -70,8 +70,13 @@ func Login(client *http.Client) error {
 }
 
 func FetchArchive(client *http.Client) (io.ReadCloser, error) {
+	var query string
+	if config.Tag != "" {
+		query = "&query=not tag:" + config.Tag
+	}
+
 	slog.Info("Requesting tarball")
-	resp, err := client.Get("https://mail.etu.cyu.fr/home/" + config.Address + "/?fmt=tgz&meta=1")
+	resp, err := client.Get("https://mail.etu.cyu.fr/home/" + config.Address + "/?fmt=tgz&meta=1" + query)
 	if err != nil {
 		return nil, fmt.Errorf("GET https://mail.etu.cyu.fr/home/: %w", err)
 	}
@@ -196,7 +201,7 @@ func formInputs(n *html.Node, inputs url.Values) error {
 	return nil
 }
 
-func DeleteMails(client *http.Client, ids []string) error {
+func TagMails(client *http.Client, ids []string) error {
 	url := "https://mail.etu.cyu.fr/service/soap"
 
 	body := fmt.Sprintf(`{
@@ -204,12 +209,13 @@ func DeleteMails(client *http.Client, ids []string) error {
     "MsgActionRequest": {
       "_jsns": "urn:zimbraMail",
       "action": {
-        "op": "trash",
+        "op": "tag",
+        "tn": "%s",
         "id": "%s"
       }
     }
   }
-}`, strings.Join(ids, ","))
+}`, config.Tag, strings.Join(ids, ","))
 
 	slog.Info("Deleting e-mails", slog.String("url", url), slog.Any("ids", ids))
 	resp, err := client.Post(url, "application/soap+xml", strings.NewReader(body))
