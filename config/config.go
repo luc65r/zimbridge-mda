@@ -6,6 +6,6 @@ var (
 	Username string
 	Password string
 	Address string
-	Maildir string
+	LMTPServer string
 	Tag string
 )

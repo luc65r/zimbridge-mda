@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path"
 	"strings"
 
+	"github.com/emersion/go-smtp"
 	"ransan.fr/zimbridge/mda/config"
-	"ransan.fr/zimbridge/mda/maildir"
 	"ransan.fr/zimbridge/mda/zimbra"
 )
 
@@ -44,17 +45,16 @@ Lucas Ransan <lucas@ransan.fr>
 
 Zimbridge-MDA (Zimbra bridge, Mail Delivery Agent) uses your USERNAME and your
 PASSWORD to connect to https://mail.etu.cyu.fr (Zimbra webmail instance) and
-download all your e-mails.  It stores them in the provided MAILDIR directory,
-using Maildir++ directory layout.  You can then use an email client to read your
-e-mails offline, or configure an IMAP server like Dovecot to use that directory.
-Zimbridge-MDA can also tag all the stored e-mails in the webmail, so that it
-doesn't fetch them again the next time.
+download all e-mails from the Inbox folder.  It sends them to a provided
+LMTP_SERVER, like Dovecot, using UNIX sockets.  Zimbridge-MDA can also tag all
+the stored e-mails in the webmail, so that it doesn't fetch them again the next
+time.
 
 USAGE:
-    %s -username USERNAME -password PASSWORD -address ADDRESS MAILDIR
+    %s -username USERNAME -password PASSWORD -address ADDRESS LMTP_SERVER
 
 POSITIONAL ARGUMENTS:
-    <MAILDIR>
+    <LMTP_SERVER>    Path to UNIX socket where your LMTP server is listening
 
 OPTIONS:
     -u, -username USERNAME    Your CYU username, probably starting with "e-"
@@ -77,9 +77,9 @@ OPTIONS:
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &handlerOptions))
 	slog.SetDefault(logger)
 
-	config.Maildir = flag.Arg(0)
-	if config.Maildir == "" {
-		slog.Error("No maildir directory provided")
+	config.LMTPServer = flag.Arg(0)
+	if config.LMTPServer == "" {
+		slog.Error("No LMTP server provided")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -113,7 +113,7 @@ OPTIONS:
 		slog.String("username", config.Username),
 		slog.String("password", strings.Repeat("*", len(config.Password))),
 		slog.String("address", config.Address),
-		slog.String("maildir", config.Maildir))
+		slog.String("LMTP server", config.LMTPServer))
 
 	client, err := zimbra.Initialize()
 	if err != nil {
@@ -141,28 +141,34 @@ OPTIONS:
 		os.Exit(1)
 	}
 
-	maildir, err := maildir.Open(config.Maildir)
+	lmtp, err := net.Dial("unix", config.LMTPServer)
 	if err != nil {
-		slog.Error("Failed to open maildir", slog.Any("error", err))
+		slog.Error("Failed to dial LTMP server", slog.Any("error", err))
 		os.Exit(1)
 	}
+	defer lmtp.Close()
 
-	ids, err := storeMails(maildir, zr)
+	lmtpClient := smtp.NewClientLMTP(lmtp)
+	defer lmtpClient.Quit()
+
+	ids, err := deliverMails(lmtpClient, zr)
 	if err != nil {
-		slog.Error("Failed to store e-mails in maildir", slog.Any("error", err))
+		slog.Error("Failed to deliver e-mails to LMTP server", slog.Any("error", err))
 		os.Exit(1)
 	}
 
 	if config.Tag != "" {
 		err = zimbra.TagMails(client, ids)
 		if err != nil {
-			slog.Error("Failed to delete e-mails from Zimbra", slog.Any("error", err))
+			slog.Error("Failed to tag e-mails in Zimbra",
+				slog.Any("error", err),
+				slog.String("tag", config.Tag))
 			os.Exit(1)
 		}
 	}
 }
 
-func storeMails(maildir *maildir.Maildir, zr io.Reader) ([]string, error) {
+func deliverMails(client *smtp.Client, zr io.Reader) ([]string, error) {
 	var ids []string
 
 	slog.Info("Reading archive")
@@ -184,21 +190,37 @@ func storeMails(maildir *maildir.Maildir, zr io.Reader) ([]string, error) {
 		}
 
 		if path.Ext(hdr.Name) == ".eml" {
-			parts := strings.Split(hdr.Name, "/")
-			md := maildir
-			for _, folder := range parts[:len(parts)-1] {
-				md, err = md.AddFolder(folder)
-				if err != nil {
-					return nil, fmt.Errorf("open maildir folder: %w", err)
-				}
-			}
+			slog.Debug("Delivering e-mail", slog.String("name", hdr.Name))
 
-			slog.Debug("Writing e-mail", slog.String("name", hdr.Name))
-			err = md.AddMail(tr)
+			err = client.Mail("", nil)
 			if err != nil {
-				return nil, fmt.Errorf("write e-mail: %w", err)
+				return nil, fmt.Errorf("LMTP MAIL: %w", err)
 			}
 
+			err = client.Rcpt(config.Address, nil)
+			if err != nil {
+				return nil, fmt.Errorf("LMTP RCPT: %w", err)
+			}
+
+			data, err := client.LMTPData(func(rcpt string, status *smtp.SMTPError) {
+				if status != nil {
+					slog.Warn("LMTP error", slog.String("rcpt", rcpt), slog.Any("status", *status))
+				}
+			})
+			if err != nil {
+				return nil, fmt.Errorf("LMTP DATA: %w", err)
+			}
+
+			_, err = io.Copy(data, tr)
+			closeErr := data.Close()
+			if err != nil {
+				return nil, err
+			}
+			if closeErr != nil {
+				return nil, fmt.Errorf("close data: %w", err)
+			}
+
+			parts := strings.Split(hdr.Name, "/")
 			name := parts[len(parts)-1]
 			id, _, found := strings.Cut(name, "-")
 			if !found {

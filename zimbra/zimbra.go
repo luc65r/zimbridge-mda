@@ -74,17 +74,18 @@ func FetchArchive(client *http.Client) (io.ReadCloser, error) {
 	if config.Tag != "" {
 		query = "&query=not tag:" + config.Tag
 	}
+	url := "https://mail.etu.cyu.fr/home/" + config.Address + "/inbox?fmt=tgz&meta=1" + query
 
-	slog.Info("Requesting tarball")
-	resp, err := client.Get("https://mail.etu.cyu.fr/home/" + config.Address + "/?fmt=tgz&meta=1" + query)
+	slog.Info("Requesting tarball", slog.String("url", url))
+	resp, err := client.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("GET https://mail.etu.cyu.fr/home/: %w", err)
+		return nil, fmt.Errorf("GET %s: %w", url, err)
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("GET https://mail.etu.cyu.fr/home/: unexpected status code: %v", resp.StatusCode)
+		return nil, fmt.Errorf("GET %s: unexpected status code: %v", url, resp.StatusCode)
 	}
 	if ct := resp.Header.Get("content-type"); !strings.HasPrefix(ct, "application/x-compressed-tar") {
-		return nil, fmt.Errorf("GET https://mail.etu.cyu.fr/home/: unexpected content-type: %s", ct)
+		return nil, fmt.Errorf("GET %s: unexpected content-type: %s", url, ct)
 	}
 	slog.Debug("Got tarball", slog.Any("url", resp.Request.URL))
 
