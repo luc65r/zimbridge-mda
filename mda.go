@@ -229,7 +229,7 @@ func deliverMails(client *smtp.Client, zr io.Reader) ([]string, error) {
 			name := parts[len(parts)-1]
 			id, _, found := strings.Cut(name, "-")
 			if !found {
-				slog.Warn("Cannot find id in file name", slog.String("name", name))
+				slog.Error("Cannot find id in file name", slog.String("name", name))
 				continue
 			}
 
