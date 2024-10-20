@@ -72,7 +72,7 @@ func Login(client *http.Client) error {
 func FetchArchive(client *http.Client) (io.ReadCloser, error) {
 	var query string
 	if config.Tag != "" {
-		query = "&query=not tag:" + config.Tag
+		query = "&query=not%20tag:" + config.Tag
 	}
 	url := "https://mail.etu.cyu.fr/home/" + config.Address + "/inbox?fmt=tgz&meta=1" + query
 
