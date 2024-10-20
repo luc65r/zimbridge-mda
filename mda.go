@@ -220,6 +220,11 @@ func deliverMails(client *smtp.Client, zr io.Reader) ([]string, error) {
 				return nil, fmt.Errorf("close data: %w", err)
 			}
 
+			err = client.Reset()
+			if err != nil {
+				return nil, err
+			}
+
 			parts := strings.Split(hdr.Name, "/")
 			name := parts[len(parts)-1]
 			id, _, found := strings.Cut(name, "-")
