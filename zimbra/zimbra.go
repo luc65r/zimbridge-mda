@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/publicsuffix"
-	"ransan.fr/zimbridge/mda/config"
+	"ransan.fr/zimbridge/config"
 )
 
 func Initialize() (*http.Client, error) {

@@ -13,8 +13,8 @@ import (
 	"strings"
 
 	"github.com/emersion/go-smtp"
-	"ransan.fr/zimbridge/mda/config"
-	"ransan.fr/zimbridge/mda/zimbra"
+	"ransan.fr/zimbridge/config"
+	"ransan.fr/zimbridge/zimbra"
 )
 
 func main() {

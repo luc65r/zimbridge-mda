@@ -1,4 +1,4 @@
-module ransan.fr/zimbridge/mda
+module ransan.fr/zimbridge
 
 go 1.23.2
 
