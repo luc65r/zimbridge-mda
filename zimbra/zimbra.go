@@ -81,6 +81,9 @@ func FetchArchive(client *http.Client) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("GET %s: %w", url, err)
 	}
+	if resp.StatusCode == 204 {
+		return nil, nil
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("GET %s: unexpected status code: %v", url, resp.StatusCode)
 	}

@@ -132,6 +132,10 @@ OPTIONS:
 		slog.Error("Couldn't fetch archive", slog.Any("error", err))
 		os.Exit(1)
 	}
+	if archive == nil {
+		slog.Info("Nothing new")
+		os.Exit(0)
+	}
 
 	// Would it be better to request an uncompressed tar?
 	// HTTP should compress it for transport
